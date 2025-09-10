@@ -11,6 +11,19 @@ const progressContainer = document.getElementById('progressContainer');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 const folderPathInput = document.getElementById('folderPath');
+const csvPathInput = document.getElementById('csvPath');
+const csvFiltersInput = document.getElementById('csvFilters');
+
+// 简单HTML转义，避免路径/文件名中的特殊字符影响渲染
+function escapeHtml(text) {
+    if (text == null) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
@@ -21,6 +34,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const savedPath = localStorage.getItem('lastFolderPath');
     if (savedPath) {
         folderPathInput.value = savedPath;
+    }
+
+    // 恢复上次CSV路径
+    const savedCSV = localStorage.getItem('lastCSVPath');
+    if (savedCSV && csvPathInput) {
+        csvPathInput.value = savedCSV;
+    }
+
+    const savedFilters = localStorage.getItem('lastCSVFilters');
+    if (savedFilters && csvFiltersInput) {
+        csvFiltersInput.value = savedFilters;
     }
 });
 
@@ -45,6 +69,154 @@ function handleKeyPress(event) {
             event.preventDefault();
             markGood();
             break;
+    }
+}
+
+// 从CSV加载图片
+async function loadImagesFromCSV() {
+    const csvPath = (csvPathInput ? csvPathInput.value : '').trim();
+
+    if (!csvPath) {
+        showStatus('请输入CSV文件路径', 'warning');
+        return;
+    }
+
+    // 保存CSV路径到localStorage
+    localStorage.setItem('lastCSVPath', csvPath);
+
+    showStatus('正在从CSV加载图片...', 'info');
+
+    try {
+        const response = await fetch('/api/images_from_csv', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ csv_path: csvPath })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+            images = data.images;
+            currentIndex = 0;
+            annotations = {};
+
+            // 预载入quality（如果返回了）
+            if (data.qualities && typeof data.qualities === 'object') {
+                for (const [imgPath, q] of Object.entries(data.qualities)) {
+                    annotations[imgPath] = {
+                        quality: q,
+                        timestamp: new Date().toISOString()
+                    };
+                }
+            }
+
+            if (images.length > 0) {
+                const invalidInfo = (data.invalid && data.invalid > 0) ? `，忽略无效条目 ${data.invalid} 个` : '';
+                showStatus(`成功从CSV加载 ${images.length} 张图片${invalidInfo}`,'success');
+                showControls();
+                updateProgress();
+                displayCurrentImage();
+            } else {
+                showStatus('CSV中没有有效的图片路径', 'warning');
+                hideControls();
+            }
+        } else {
+            showStatus(`加载失败: ${data.error}`, 'warning');
+        }
+    } catch (error) {
+        showStatus(`加载失败: ${error.message}`, 'warning');
+        console.error('Error loading images from CSV:', error);
+    }
+}
+
+// 解析筛选输入，如："quality=Good; cid1=123,456"
+function parseFiltersInput(text) {
+    const filters = {};
+    if (!text) return filters;
+    const parts = text.split(';');
+    for (const part of parts) {
+        const seg = part.trim();
+        if (!seg) continue;
+        const eqIdx = seg.indexOf('=');
+        if (eqIdx <= 0) continue;
+        const key = seg.slice(0, eqIdx).trim();
+        const valueRaw = seg.slice(eqIdx + 1).trim();
+        if (!key) continue;
+        if (valueRaw.includes(',')) {
+            filters[key] = valueRaw.split(',').map(s => s.trim()).filter(Boolean);
+        } else {
+            filters[key] = valueRaw;
+        }
+    }
+    return filters;
+}
+
+async function loadImagesFromCSVWithFilters() {
+    const csvPath = (csvPathInput ? csvPathInput.value : '').trim();
+    const filtersText = (csvFiltersInput ? csvFiltersInput.value : '').trim();
+
+    if (!csvPath) {
+        showStatus('请输入CSV文件路径', 'warning');
+        return;
+    }
+
+    const filters = parseFiltersInput(filtersText);
+    localStorage.setItem('lastCSVPath', csvPath);
+    localStorage.setItem('lastCSVFilters', filtersText);
+
+    showStatus('正在按筛选从CSV加载图片...', 'info');
+
+    try {
+        const response = await fetch('/api/images_from_csv', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ csv_path: csvPath, filters })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+            images = data.images;
+            currentIndex = 0;
+            annotations = {};
+
+            if (data.qualities && typeof data.qualities === 'object') {
+                for (const [imgPath, q] of Object.entries(data.qualities)) {
+                    annotations[imgPath] = {
+                        quality: q,
+                        timestamp: new Date().toISOString()
+                    };
+                }
+            }
+
+            if (images.length > 0) {
+                const invalidInfo = (data.invalid && data.invalid > 0) ? `，忽略无效条目 ${data.invalid} 个` : '';
+                showStatus(`成功从CSV加载 ${images.length} 张图片${invalidInfo}`,'success');
+                showControls();
+                updateProgress();
+                displayCurrentImage();
+            } else {
+                showStatus('筛选后没有有效的图片路径', 'warning');
+                hideControls();
+            }
+        } else {
+            showStatus(`加载失败: ${data.error}`, 'warning');
+        }
+    } catch (error) {
+        showStatus(`加载失败: ${error.message}`, 'warning');
+        console.error('Error loading images with filters:', error);
     }
 }
 
@@ -111,8 +283,14 @@ function displayCurrentImage() {
     const encodedPath = encodeURIComponent(imagePath);
     
     imageContainer.innerHTML = `
-        <img src="/api/image/?path=${encodedPath}" alt="${imageName}" 
-             onload="imageLoaded()" onerror="imageError()">
+        <div style="display:flex; flex-direction:column; align-items:center; width:100%">
+            <img src="/api/image/?path=${encodedPath}" alt="${escapeHtml(imageName)}" 
+                 onload="imageLoaded()" onerror="imageError()">
+            <div style="margin-top:10px; color:#555; font-size:14px; width:100%; max-width:1000px;">
+                <div><strong>文件名</strong>: <span style="font-family:monospace">${escapeHtml(imageName)}</span></div>
+                <div style="word-break:break-all"><strong>路径</strong>: <span style="font-family:monospace">${escapeHtml(imagePath)}</span></div>
+            </div>
+        </div>
 `;
     
     updateStatus();

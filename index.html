@@ -228,6 +228,16 @@
             <button onclick="loadImages()">加载图片</button>
         </div>
 
+        <div class="folder-input">
+            <input type="text" id="csvPath" placeholder="请输入CSV文件路径 (含 path 列)" value="">
+            <button onclick="loadImagesFromCSV()">从CSV加载图片</button>
+        </div>
+
+        <div class="folder-input">
+            <input type="text" id="csvFilters" placeholder="可选筛选：例如 quality=Good; cid1=123,456" value="">
+            <button onclick="loadImagesFromCSVWithFilters()">按筛选加载</button>
+        </div>
+
         <div class="status info" id="status">
             请选择图片文件夹路径并点击"加载图片"开始标注
         </div>

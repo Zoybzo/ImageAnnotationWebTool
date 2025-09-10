@@ -19,6 +19,9 @@ app = Flask(__name__)
 # 支持的图片格式
 SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
 
+# 项目根路径（用于解析相对路径）
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 # CSV文件路径
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 CSV_FILE = f"data/annotations_{timestamp}.csv"
@@ -244,6 +247,10 @@ def get_images():
         if not os.path.exists(folder_path):
             return jsonify({"success": False, "error": "文件夹不存在"})
 
+        # 支持相对路径：相对项目根目录解析
+        if not os.path.isabs(folder_path):
+            folder_path = os.path.normpath(os.path.join(PROJECT_ROOT, folder_path))
+
         if not os.path.isdir(folder_path):
             return jsonify({"success": False, "error": "指定路径不是文件夹"})
 
@@ -256,6 +263,150 @@ def get_images():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
+
+@app.route("/api/images_from_csv", methods=["POST"])
+def get_images_from_csv():
+    """从CSV文件读取图片路径列表。CSV需包含列名 'path' 或 'image_path'，可选 'quality' 列"""
+    try:
+        data = request.get_json()
+        csv_path = data.get("csv_path", "").strip()
+        filters = data.get("filters", {}) or {}
+
+        if not csv_path:
+            return jsonify({"success": False, "error": "CSV文件路径不能为空"})
+
+        if not os.path.exists(csv_path):
+            return jsonify({"success": False, "error": "CSV文件不存在"})
+
+        if not os.path.isfile(csv_path) or not csv_path.lower().endswith(".csv"):
+            return jsonify({"success": False, "error": "指定路径不是CSV文件"})
+
+        image_paths = []
+        # 暂存从CSV读到的quality（键为原始/清洗后的字符串）；稍后会转成绝对路径键
+        raw_quality_map = {}
+
+        # 优先使用pandas读取，兼容列名 'path' 或 'image_path'
+        if PANDAS_AVAILABLE:
+            try:
+                df = pd.read_csv(csv_path)
+                candidate_cols = [col for col in ["path", "image_path"] if col in df.columns]
+                if not candidate_cols:
+                    return jsonify({
+                        "success": False,
+                        "error": "CSV缺少'path'或'image_path'列"
+                    })
+                path_col = candidate_cols[0]
+
+                # 计算可用的过滤条件（仅对存在于CSV中的列应用）
+                applicable_filters = {}
+                for k, v in (filters.items() if isinstance(filters, dict) else []):
+                    if k in df.columns:
+                        # 将所有值转为字符串进行一致性比较
+                        values = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip() != ""]
+                        if values:
+                            applicable_filters[k] = values
+
+                # 应用过滤
+                if applicable_filters:
+                    mask = pd.Series([True] * len(df))
+                    for k, values in applicable_filters.items():
+                        mask = mask & df[k].astype(str).isin(values)
+                    df = df[mask]
+
+                image_paths = df[path_col].dropna().astype(str).tolist()
+                # 如果包含quality列，则记录下来
+                if "quality" in df.columns:
+                    for _, row in df.iterrows():
+                        raw_path = row.get(path_col)
+                        if pd.isna(raw_path):
+                            continue
+                        p = str(raw_path).strip().strip('"').strip("'")
+                        q = row.get("quality")
+                        if not pd.isna(q):
+                            raw_quality_map[p] = str(q)
+            except Exception as e:
+                return jsonify({"success": False, "error": f"读取CSV失败: {e}"})
+        else:
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    header = reader.fieldnames or []
+                    path_col = "path" if "path" in header else ("image_path" if "image_path" in header else None)
+                    if path_col is None:
+                        return jsonify({
+                            "success": False,
+                            "error": "CSV缺少'path'或'image_path'列"
+                        })
+
+                    # 计算可用过滤条件
+                    applicable_filters = {}
+                    if isinstance(filters, dict):
+                        for k, v in filters.items():
+                            if k in header:
+                                values = [str(x).strip() for x in (v if isinstance(v, list) else [v]) if str(x).strip() != ""]
+                                if values:
+                                    applicable_filters[k] = set(values)
+
+                    for row in reader:
+                        # 如有过滤条件，则校验
+                        passes = True
+                        if applicable_filters:
+                            for k, values in applicable_filters.items():
+                                rv = (row.get(k) or "").strip()
+                                if rv not in values:
+                                    passes = False
+                                    break
+                        if not passes:
+                            continue
+
+                        value = (row.get(path_col) or "").strip()
+                        if value:
+                            image_paths.append(value)
+                            if "quality" in header:
+                                q = (row.get("quality") or "").strip()
+                                if q:
+                                    # 存原始和去引号两种形式，方便匹配
+                                    raw_quality_map[value] = q
+                                    cleaned = value.strip().strip('"').strip("'")
+                                    raw_quality_map[cleaned] = q
+            except Exception as e:
+                return jsonify({"success": False, "error": f"读取CSV失败: {e}"})
+
+        # 过滤有效的图片路径（支持相对路径，按项目根目录解析）
+        valid_images = []
+        invalid_entries = 0
+        for p in image_paths:
+            # 支持可能包含多余空白或引号的情况
+            candidate = p.strip().strip('"').strip("'")
+            # 若为相对路径，则相对项目根目录解析
+            if not os.path.isabs(candidate):
+                candidate = os.path.normpath(os.path.join(PROJECT_ROOT, candidate))
+            if os.path.exists(candidate) and is_image_file(candidate):
+                valid_images.append(candidate)
+            else:
+                invalid_entries += 1
+
+        # 将raw_quality_map的键统一解析为绝对路径，便于与valid_images匹配
+        qualities = {}
+        for raw_key, q in raw_quality_map.items():
+            k = (raw_key or "").strip().strip('"').strip("'")
+            if not os.path.isabs(k):
+                k = os.path.normpath(os.path.join(PROJECT_ROOT, k))
+            qualities[k] = q
+
+        # 仅保留有效图片的quality
+        qualities = {vp: qualities[vp] for vp in valid_images if vp in qualities}
+
+        return jsonify({
+            "success": True,
+            "images": sorted(valid_images),
+            "count": len(valid_images),
+            "invalid": invalid_entries,
+            "qualities": qualities
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route("/api/image/")
 def serve_image():
