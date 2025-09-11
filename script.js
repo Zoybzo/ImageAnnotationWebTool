@@ -13,6 +13,7 @@ const progressText = document.getElementById('progressText');
 const folderPathInput = document.getElementById('folderPath');
 const csvPathInput = document.getElementById('csvPath');
 const csvFiltersInput = document.getElementById('csvFilters');
+const singleImagePathInput = document.getElementById('singleImagePath');
 
 // 简单HTML转义，避免路径/文件名中的特殊字符影响渲染
 function escapeHtml(text) {
@@ -46,6 +47,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (savedFilters && csvFiltersInput) {
         csvFiltersInput.value = savedFilters;
     }
+
+    const savedSingle = localStorage.getItem('lastSingleImagePath');
+    if (savedSingle && singleImagePathInput) {
+        singleImagePathInput.value = savedSingle;
+    }
 });
 
 // 键盘事件处理
@@ -70,6 +76,25 @@ function handleKeyPress(event) {
             markGood();
             break;
     }
+}
+
+// 根据输入路径显示单张图片
+function showSingleImage() {
+    const path = (singleImagePathInput ? singleImagePathInput.value : '').trim();
+    if (!path) {
+        showStatus('请输入单张图片路径', 'warning');
+        return;
+    }
+    localStorage.setItem('lastSingleImagePath', path);
+
+    images = [path];
+    currentIndex = 0;
+    annotations = {};
+
+    showStatus('正在加载图片...', 'info');
+    showControls();
+    updateProgress();
+    displayCurrentImage();
 }
 
 // 从CSV加载图片
