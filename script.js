@@ -13,6 +13,7 @@ const progressText = document.getElementById('progressText');
 const folderPathInput = document.getElementById('folderPath');
 const csvPathInput = document.getElementById('csvPath');
 const csvFiltersInput = document.getElementById('csvFilters');
+const csvOrderSelect = document.getElementById('csvOrder');
 const singleImagePathInput = document.getElementById('singleImagePath');
 
 // 简单HTML转义，避免路径/文件名中的特殊字符影响渲染
@@ -51,6 +52,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const savedSingle = localStorage.getItem('lastSingleImagePath');
     if (savedSingle && singleImagePathInput) {
         singleImagePathInput.value = savedSingle;
+    }
+
+    const savedOrder = localStorage.getItem('lastCSVOrder');
+    if (savedOrder && csvOrderSelect) {
+        csvOrderSelect.value = savedOrder;
     }
 });
 
@@ -100,6 +106,7 @@ function showSingleImage() {
 // 从CSV加载图片
 async function loadImagesFromCSV() {
     const csvPath = (csvPathInput ? csvPathInput.value : '').trim();
+    const order = (csvOrderSelect ? csvOrderSelect.value : 'original');
 
     if (!csvPath) {
         showStatus('请输入CSV文件路径', 'warning');
@@ -108,6 +115,7 @@ async function loadImagesFromCSV() {
 
     // 保存CSV路径到localStorage
     localStorage.setItem('lastCSVPath', csvPath);
+    localStorage.setItem('lastCSVOrder', order);
 
     showStatus('正在从CSV加载图片...', 'info');
 
@@ -117,7 +125,7 @@ async function loadImagesFromCSV() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ csv_path: csvPath })
+            body: JSON.stringify({ csv_path: csvPath, order })
         });
 
         if (!response.ok) {
@@ -185,6 +193,7 @@ function parseFiltersInput(text) {
 async function loadImagesFromCSVWithFilters() {
     const csvPath = (csvPathInput ? csvPathInput.value : '').trim();
     const filtersText = (csvFiltersInput ? csvFiltersInput.value : '').trim();
+    const order = (csvOrderSelect ? csvOrderSelect.value : 'original');
 
     if (!csvPath) {
         showStatus('请输入CSV文件路径', 'warning');
@@ -194,6 +203,7 @@ async function loadImagesFromCSVWithFilters() {
     const filters = parseFiltersInput(filtersText);
     localStorage.setItem('lastCSVPath', csvPath);
     localStorage.setItem('lastCSVFilters', filtersText);
+    localStorage.setItem('lastCSVOrder', order);
 
     showStatus('正在按筛选从CSV加载图片...', 'info');
 
@@ -203,7 +213,7 @@ async function loadImagesFromCSVWithFilters() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ csv_path: csvPath, filters })
+            body: JSON.stringify({ csv_path: csvPath, filters, order })
         });
 
         if (!response.ok) {

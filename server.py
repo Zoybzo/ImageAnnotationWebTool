@@ -271,6 +271,7 @@ def get_images_from_csv():
         data = request.get_json()
         csv_path = data.get("csv_path", "").strip()
         filters = data.get("filters", {}) or {}
+        order = (data.get("order") or "original").strip().lower()
 
         if not csv_path:
             return jsonify({"success": False, "error": "CSV文件路径不能为空"})
@@ -397,10 +398,16 @@ def get_images_from_csv():
         # 仅保留有效图片的quality
         qualities = {vp: qualities[vp] for vp in valid_images if vp in qualities}
 
+        # 排序逻辑：original 保留 CSV 原顺序；filename 按文件名字典序
+        images_out = list(valid_images)
+        if order == "filename":
+            images_out.sort(key=lambda p: os.path.basename(p))
+        # 默认 original：不排序
+
         return jsonify({
             "success": True,
-            "images": sorted(valid_images),
-            "count": len(valid_images),
+            "images": images_out,
+            "count": len(images_out),
             "invalid": invalid_entries,
             "qualities": qualities
         })
